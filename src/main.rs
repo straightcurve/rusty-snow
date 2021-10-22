@@ -111,7 +111,114 @@ fn send_frames(context: &zmq::Context) {
 }
 
 #[cfg(target_os = "linux")]
+fn handle_input(context: &zmq::Context) {
+    use evdev::uinput::VirtualDeviceBuilder;
+    use evdev::AttributeSet;
+    use evdev::InputId;
+    use evdev::Key;
+
+    let mut keys: AttributeSet<Key> = AttributeSet::new();
+    keys.insert(Key::new(17));
+    keys.insert(Key::new(30));
+    keys.insert(Key::new(31));
+    keys.insert(Key::new(32));
+
+    let mut vd = VirtualDeviceBuilder::new()
+        .unwrap()
+        .name("Rusty Snow Virtual Keyboard")
+        .input_id(InputId::new(evdev::BusType::BUS_USB, 0x02, 0x03, 2))
+        .with_keys(&keys)
+        .unwrap()
+        .build()
+        .unwrap();
+    /*
+        use evdev_rs::enums;
+        //use evdev_rs::enums::EventCode::EV_KEY;
+        use evdev_rs::enums::EventType::EV_KEY;
+        use evdev_rs::enums::EventType::EV_SYN;
+        use evdev_rs::{Device, InputEvent, TimeVal, UInputDevice, UninitDevice};
+
+        let fd = std::fs::File::open(
+            "/dev/input/by-id/usb-Ducky_Ducky_One2_SF_RGB_DK-V1.06-200925-event-kbd",
+        )
+        .unwrap();
+        let uninit_device = UninitDevice::new().unwrap();
+        let device = uninit_device.set_file(fd).unwrap();
+        let ui = UInputDevice::create_from_device(&device).unwrap();
+    */
+    let r_input = context.socket(zmq::PULL).unwrap();
+    assert!(r_input
+        .bind(&format!("tcp://*:{}", networking::HOST_INPUT_STREAM_PORT))
+        .is_ok());
+
+    loop {
+        let identity = r_input.recv_string(0).unwrap().unwrap();
+        let envelope = r_input.recv_string(0).unwrap().unwrap();
+        // bincode::deserialize::<Vec<u32>>(&r_input.recv_bytes(0).unwrap())
+
+        println!("[H] [{}] envelope: {}", identity, envelope); // Envelope
+
+        let key_str = r_input.recv_string(0).unwrap().unwrap();
+        let state_str = r_input.recv_string(0).unwrap().unwrap();
+
+        println!("[H] [{}] {} {:?}", identity, state_str, key_str);
+
+        let key = u16::from_str_radix(&key_str, 10).unwrap();
+        let state = i32::from_str_radix(&state_str, 10).unwrap();
+        /*
+        ui.write_event(&InputEvent::new(
+            &TimeVal::new(0, 0),
+            //&enums::EventCode::from_str(&EV_KEY, "KEY_A").unwrap(),
+            &enums::EventCode::EV_UNK {
+                event_type: 1,
+                event_code: key,
+            },
+            state,
+        ))
+        .unwrap();
+
+        ui.write_event(&InputEvent::new(
+            &TimeVal::new(0, 0),
+            &enums::EventCode::from_str(&EV_SYN, "SYN_REPORT").unwrap(),
+            state,
+        ))
+        .unwrap();
+
+        */
+        //thread::sleep(Duration::from_millis(1));
+        vd.emit(&[evdev::InputEvent::new(evdev::EventType::KEY, key, state)])
+            .unwrap();
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn host(args: Vec<String>) {
+    /*
+    let zzzz = input_linux::uinput::UInputHandle::new(uinput);
+
+    let name = bincode::serialize("Rusty Snow Virtual Keyboard").unwrap();
+    let mut sigh = vec![];
+    for b in name {
+        sigh.push(b as i8);
+    }
+    use std::convert::TryInto;
+    let uinput_setup = input_linux_sys::uinput_setup {
+        id: input_linux_sys::input_id {
+            bustype: 0x03,
+            vendor: 0x02,
+            product: 0x03,
+            version: 2,
+        },
+        name: sigh[..].try_into().unwrap(),
+        ff_effects_max: 0,
+    };
+
+    zzzz.dev_setup(uinput_setup);
+
+    let fd = std::fs::File::open("/dev/input/event74");
+
+    */
+
     let context = zmq::Context::new();
 
     {
@@ -121,6 +228,10 @@ fn host(args: Vec<String>) {
     {
         let ctx = context.clone();
         thread::spawn(move || send_frames(&ctx));
+    }
+    {
+        let ctx = context.clone();
+        thread::spawn(move || handle_input(&ctx));
     }
 
     loop {}
@@ -373,6 +484,24 @@ out vec2 v_tex_coords;
 
     use glium::Surface;
 
+    let context = &client.context;
+    let w_input = context.socket(zmq::PUSH).unwrap();
+    w_input
+        .connect(&format!(
+            "tcp://{}:{}",
+            "localhost",
+            networking::HOST_INPUT_STREAM_PORT
+        ))
+        .expect(&format!(
+            "[C] [{}] failed connecting to host at {}",
+            client.user_id,
+            format!(
+                "tcp://{}:{}",
+                "localhost",
+                networking::HOST_INPUT_STREAM_PORT
+            )
+        ));
+
     event_loop.run(move |ev, _, control_flow| {
         let next_frame_time =
             std::time::Instant::now() + std::time::Duration::from_nanos(16_666_667);
@@ -391,6 +520,18 @@ out vec2 v_tex_coords;
                 glutin::event::DeviceEvent::Key(input, ..) => {
                     // scancode: u32
                     println!("glutin: keyboard: [{}]", input.scancode);
+
+                    w_input.send(&client.user_id, SNDMORE).unwrap();
+                    w_input.send("KEY", SNDMORE).unwrap();
+                    w_input.send(&format!("{}", input.scancode), 0).unwrap();
+
+                    use glutin::event::ElementState;
+
+                    let state = match input.state {
+                        ElementState::Pressed => 1,
+                        ElementState::Released => 0,
+                    };
+                    w_input.send(&format!("{:?}", state), 0).unwrap();
                     return;
                 }
 

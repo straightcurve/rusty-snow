@@ -3,6 +3,7 @@ use std::time::Duration;
 
 pub const HOST_PRIMARY_PORT: u32 = 5564;
 pub const HOST_FRAME_STREAM_PORT: u32 = 5565;
+pub const HOST_INPUT_STREAM_PORT: u32 = 5566;
 
 pub struct Host {
     pub context: zmq::Context,
@@ -75,7 +76,7 @@ pub struct Client {
      */
     pub r_frame: zmq::Socket,
 
-    context: zmq::Context,
+    pub context: zmq::Context,
     input: zmq::Socket,
 }
 
