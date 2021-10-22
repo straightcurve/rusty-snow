@@ -14,6 +14,7 @@ glium = "0.30.2"
 glutin = "*"
 gilrs = "*"
 lazy_static = "1.4.0"
+mozjpeg = "*"
 
 [target.'cfg(unix)'.dependencies]
 x11 = "2.19.1"
@@ -22,4 +23,3 @@ input-linux-sys = "0.7.0"
 evdev = "*"
 evdev-rs = "*"
 image = "*"
-mozjpeg = "*"
