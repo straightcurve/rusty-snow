@@ -16,7 +16,7 @@ impl Image<'_> {
         unsafe {
             if let Some(free) = self.destroy {
                 free(self.raw_ptr);
-                self.raw_ptr = null::<xlib::XImage>() as *mut x11::xlib::XImage;
+                self.raw_ptr = null::<x11::xlib::XImage>() as *mut x11::xlib::XImage;
                 self.data = &[];
                 self.destroy = None;
             }
@@ -40,7 +40,7 @@ pub fn record_linux(display: *mut x11::xlib::_XDisplay, xid: u64) -> Image<'stat
         height: 0,
         border_width: 0,
         depth: 0,
-        visual: null::<xlib::Visual>() as *mut x11::xlib::Visual,
+        visual: null::<x11::xlib::Visual>() as *mut x11::xlib::Visual,
         root: 0,
         class: 0,
         bit_gravity: 0,
@@ -56,7 +56,7 @@ pub fn record_linux(display: *mut x11::xlib::_XDisplay, xid: u64) -> Image<'stat
         your_event_mask: 0,
         do_not_propagate_mask: 0,
         override_redirect: 0,
-        screen: null::<xlib::Screen>() as *mut x11::xlib::Screen,
+        screen: null::<x11::xlib::Screen>() as *mut x11::xlib::Screen,
     };
 
     unsafe {
