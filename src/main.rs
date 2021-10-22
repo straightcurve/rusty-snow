@@ -91,7 +91,7 @@ fn send_frames(context: &zmq::Context) {
 
     loop {
         let xid = u64::from_str_radix(&args[2], 16).unwrap();
-        let mut image = recording::record_linux(display, xid);
+        let image = recording::record_linux(display, xid);
         {
             w_frame
                 .send("frame", zmq::SNDMORE)
@@ -102,10 +102,11 @@ fn send_frames(context: &zmq::Context) {
             w_frame
                 .send(bincode::serialize(&image.height).unwrap(), zmq::SNDMORE)
                 .expect("failed sending frame height");
-
-            w_frame.send(image.data, 0).expect("failed sending frame");
+            w_frame
+                .send(image.data.unwrap(), 0)
+                .expect("failed sending frame");
         }
-        image.free();
+
         thread::sleep(Duration::from_millis(16));
     }
 }
@@ -570,7 +571,37 @@ out vec2 v_tex_coords;
             .recv_bytes(0)
             .expect("failed receiving message");
 
-        let image = glium::texture::RawImage2d::from_raw_rgba(message, (width, height));
+        let d = mozjpeg::Decompress::with_markers(mozjpeg::NO_MARKERS)
+            .from_mem(&message)
+            .unwrap();
+
+        assert!(d.color_space() == mozjpeg::ColorSpace::JCS_YCbCr);
+        println!(
+            "image: {}x{} | comp: {}x{}",
+            width,
+            height,
+            d.width(),
+            d.height()
+        );
+
+        let mut rgb = d.rgba().unwrap();
+        println!("rgb: {}x{}", rgb.width(), rgb.height());
+        assert!(rgb.color_space() == mozjpeg::ColorSpace::JCS_EXT_RGBA);
+
+        let mut pixels: Vec<u32> = rgb.read_scanlines().unwrap();
+        assert!(rgb.finish_decompress());
+
+        let mut u8slice = bincode::serialize(&pixels).unwrap();
+        for i in 0..8 {
+            u8slice.pop();
+        }
+        println!(
+            "pixels: {}, first [{:?} ..]",
+            u8slice.len(),
+            u8slice[0..=8].to_vec()
+        );
+
+        let image = glium::texture::RawImage2d::from_raw_rgba(u8slice, (width, height));
         let texture = glium::texture::SrgbTexture2d::new(&display, image).unwrap();
 
         let (our_width, our_height) = frame.get_dimensions();

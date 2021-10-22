@@ -1,27 +1,12 @@
 use core::ptr::null;
 
 #[cfg(target_os = "linux")]
-pub struct Image<'a> {
-    pub data: &'a [u8],
+pub struct Image {
+    //pub data: Option<image::ImageBuffer<image::Rgb<u8>, Vec<u8>>>,
+    //pub data: Option<image::DynamicImage>,
+    pub data: Option<Vec<u8>>,
     pub width: u32,
     pub height: u32,
-
-    raw_ptr: *mut x11::xlib::XImage,
-    destroy: Option<unsafe extern "C" fn(*mut x11::xlib::XImage) -> i32>,
-}
-
-#[cfg(target_os = "linux")]
-impl Image<'_> {
-    pub fn free(&mut self) {
-        unsafe {
-            if let Some(free) = self.destroy {
-                free(self.raw_ptr);
-                self.raw_ptr = null::<x11::xlib::XImage>() as *mut x11::xlib::XImage;
-                self.data = &[];
-                self.destroy = None;
-            }
-        }
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -32,7 +17,7 @@ pub fn open_display() -> *mut x11::xlib::_XDisplay {
 }
 
 #[cfg(target_os = "linux")]
-pub fn record_linux(display: *mut x11::xlib::_XDisplay, xid: u64) -> Image<'static> {
+pub fn record_linux(display: *mut x11::xlib::_XDisplay, xid: u64) -> Image {
     let mut attr: x11::xlib::XWindowAttributes = x11::xlib::XWindowAttributes {
         x: 0,
         y: 0,
@@ -77,22 +62,91 @@ pub fn record_linux(display: *mut x11::xlib::_XDisplay, xid: u64) -> Image<'stat
             x11::xlib::ZPixmap,
         )
     };
-
     let slice = unsafe {
         std::slice::from_raw_parts((*image).data as *const u8, (width * height * 4) as usize)
     };
 
     let mut img: Image = Image {
-        data: slice,
-        destroy: None,
-        raw_ptr: image,
+        data: None,
         width: attr.width as u32,
         height: attr.height as u32,
     };
 
+    /*
+    let mut _zzz = image::ImageBuffer::from_fn(img.width, img.height, |x, y| unsafe {
+        if let Some(get_pixel) = (*image).funcs.get_pixel {
+            let p = get_pixel(image, x as i32, y as i32);
+            let s = bincode::serialize(&p).unwrap();
+
+            /*
+            println!("p: {:?}", bincode::serialize(&p).unwrap());
+            println!("r: {:?}", bincode::serialize(&r).unwrap());
+            println!("g: {:?}", bincode::serialize(&g).unwrap());
+            println!("b: {:?}", bincode::serialize(&b).unwrap());
+            println!("p & r << 2: {:?}", bincode::serialize(&(p & r)).unwrap()[2]);
+            println!("p & g << 1: {:?}", bincode::serialize(&(p & g)).unwrap()[1]);
+            println!("p & b << 0: {:?}", bincode::serialize(&(p & b)).unwrap()[0]);
+            println!(
+                "pixel {}x{} ({}, {}, {})",
+                x,
+                y,
+                ((p & r) >> 3) as u8,
+                ((p & g) >> 2) as u8,
+                ((p & b) >> 1) as u8
+            );
+            */
+
+            return image::Rgb([s[0], s[1], s[2]]);
+        } else {
+            return image::Rgb([0, 0, 0]);
+        }
+    });
+
+    */
+    //let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_EXT_BGRA);
+    let mut comp = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_EXT_RGBA);
+
+    comp.set_size(img.width as usize, img.height as usize);
+    comp.set_mem_dest();
+    comp.start_compress();
+
+    // replace with your image data
+    let pixels = slice.to_vec();
+    /*
+    println!(
+        "pixels: {}, first [{:?} ..]",
+        slice.len(),
+        pixels[0..=8].to_vec(),
+    );
+    */
+
+    assert!(comp.write_scanlines(&pixels[..]));
+
+    comp.finish_compress();
+    let jpeg_bytes = comp.data_to_vec().unwrap();
+    // write to file, etc.
+
+    /*
+    println!("pre {}x{}", _zzz.width(), _zzz.height());
+    _zzz = image::imageops::resize(
+        &_zzz,
+        _zzz.width() / 2,
+        _zzz.height() / 2,
+        image::imageops::FilterType::Lanczos3,
+    );
+    println!("post {}x{}", _zzz.width(), _zzz.height());
+    */
+
+    println!(
+        "pixels: {}, first [{:?} ..]",
+        slice.len(),
+        slice[0..=8].to_vec()
+    );
+    img.data = Some(jpeg_bytes);
+
     unsafe {
         if let Some(destroy_image) = (*image).funcs.destroy_image {
-            img.destroy = Some(destroy_image);
+            destroy_image(image);
         }
     }
 
