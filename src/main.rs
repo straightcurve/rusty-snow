@@ -576,16 +576,8 @@ out vec2 v_tex_coords;
             .unwrap();
 
         assert!(d.color_space() == mozjpeg::ColorSpace::JCS_YCbCr);
-        println!(
-            "image: {}x{} | comp: {}x{}",
-            width,
-            height,
-            d.width(),
-            d.height()
-        );
 
         let mut rgb = d.rgba().unwrap();
-        println!("rgb: {}x{}", rgb.width(), rgb.height());
         assert!(rgb.color_space() == mozjpeg::ColorSpace::JCS_EXT_RGBA);
 
         let mut pixels: Vec<u32> = rgb.read_scanlines().unwrap();
@@ -595,11 +587,6 @@ out vec2 v_tex_coords;
         for i in 0..8 {
             u8slice.pop();
         }
-        println!(
-            "pixels: {}, first [{:?} ..]",
-            u8slice.len(),
-            u8slice[0..=8].to_vec()
-        );
 
         let image = glium::texture::RawImage2d::from_raw_rgba(u8slice, (width, height));
         let texture = glium::texture::SrgbTexture2d::new(&display, image).unwrap();

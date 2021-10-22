@@ -137,11 +137,6 @@ pub fn record_linux(display: *mut x11::xlib::_XDisplay, xid: u64) -> Image {
     println!("post {}x{}", _zzz.width(), _zzz.height());
     */
 
-    println!(
-        "pixels: {}, first [{:?} ..]",
-        slice.len(),
-        slice[0..=8].to_vec()
-    );
     img.data = Some(jpeg_bytes);
 
     unsafe {
