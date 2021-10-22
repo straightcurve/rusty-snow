@@ -1,28 +1,50 @@
 use std::thread;
 use std::time::Duration;
 
-use byteorder::{BigEndian, ReadBytesExt};
+pub const HOST_PRIMARY_PORT: u32 = 5564;
+pub const HOST_FRAME_STREAM_PORT: u32 = 5565;
 
 pub struct Host {
-    context: zmq::Context,
-    out: zmq::Socket,
+    pub context: zmq::Context,
+
+    /**
+     * used for reading/writing general data
+     *
+     * e.g. handling new connections
+     */
+    pub rw_primary: zmq::Socket,
+
+    /**
+     * used for writing images
+     */
+    pub w_frame: zmq::Socket,
 }
 
 impl Host {
     pub fn new() -> Self {
         let context = zmq::Context::new();
-        let out = context.socket(zmq::PUB).unwrap();
-        out.bind("tcp://*:5563")
+        let w_frame = context.socket(zmq::PUB).unwrap();
+        w_frame
+            .bind(&format!("tcp://*:{}", HOST_FRAME_STREAM_PORT))
             .expect("Failed binding out socket for host");
 
-        Self { context, out }
+        let rw_primary = context.socket(zmq::ROUTER).unwrap();
+        assert!(rw_primary
+            .bind(&format!("tcp://*:{}", HOST_PRIMARY_PORT))
+            .is_ok());
+
+        Self {
+            context,
+            w_frame,
+            rw_primary,
+        }
     }
 
     pub fn send<T>(&self, data: T, flags: i32) -> Result<(), zmq::Error>
     where
         T: zmq::Sendable,
     {
-        self.out.send(data, flags)
+        self.w_frame.send(data, flags)
     }
 
     pub fn send_frame(&self, width: u32, height: u32, data: &[u8]) {
@@ -34,6 +56,110 @@ impl Host {
             .expect("failed sending frame height");
 
         self.send(data, 0).expect("failed sending frame");
+    }
+}
+
+pub struct Client {
+    pub user_id: String,
+
+    /**
+     * used for connecting and
+     * sending general data
+     *
+     * e.g. user id
+     */
+    pub rw_primary: zmq::Socket,
+
+    /**
+     * used for reading images
+     */
+    pub r_frame: zmq::Socket,
+
+    context: zmq::Context,
+    input: zmq::Socket,
+}
+
+impl Client {
+    pub fn new() -> Self {
+        let context = zmq::Context::new();
+        let input = context.socket(zmq::PUB).unwrap();
+
+        //input
+        //    .bind("tcp://*:5564")
+        //    .expect("Failed binding input socket for client");
+
+        let rw_primary = context.socket(zmq::REQ).unwrap();
+        let r_frame = context.socket(zmq::SUB).unwrap();
+
+        Self {
+            context,
+            input,
+            rw_primary,
+            r_frame,
+            user_id: String::from(""),
+        }
+    }
+
+    pub fn connect(&mut self, url: String, socket_id: String) {
+        self.user_id = socket_id;
+
+        let identity = bincode::serialize(&self.user_id).unwrap();
+        self.rw_primary.set_identity(&identity).unwrap();
+
+        self.rw_primary
+            .connect(&format!("tcp://{}:{}", url, HOST_PRIMARY_PORT))
+            .expect(&format!(
+                "[C] [{}] failed connecting to host at {}",
+                self.user_id,
+                format!("tcp://{}:{}", url, HOST_PRIMARY_PORT)
+            ));
+
+        self.rw_primary.send("SYN", 0).unwrap();
+
+        let envelope = self
+            .rw_primary
+            .recv_string(0)
+            .expect(&format!("[C] [{}] failed reading envelope 1", self.user_id))
+            .expect(&format!("[C] [{}] failed reading envelope 2", self.user_id));
+
+        if envelope != "ACK" {
+            panic!(
+                "[C] [{}] failed connecting to host at {}",
+                self.user_id, url
+            );
+        }
+
+        self.r_frame
+            .connect(&format!("tcp://{}:{}", url, HOST_FRAME_STREAM_PORT))
+            .expect(&format!(
+                "[C] [{}] failed connecting to frame stream at {}",
+                self.user_id,
+                format!("tcp://{}:{}", url, HOST_FRAME_STREAM_PORT)
+            ));
+
+        self.r_frame
+            .set_subscribe(b"frame")
+            .expect("failed subscribing");
+    }
+
+    pub fn primary_read_envelope(&mut self) -> String {
+        self.rw_primary
+            .recv_string(0)
+            .expect(&format!("[C] [{}] failed reading envelope 1", self.user_id))
+            .expect(&format!("[C] [{}] failed reading envelope 2", self.user_id))
+    }
+
+    pub fn send<T>(&self, data: T, flags: i32) -> Result<(), zmq::Error>
+    where
+        T: zmq::Sendable,
+    {
+        self.input.send(data, flags)
+    }
+
+    pub fn send_input(&self, data: &[u8]) {
+        self.send("input", zmq::SNDMORE)
+            .expect("failed sending input envelope");
+        self.send(data, 0).expect("failed sending input");
     }
 }
 
