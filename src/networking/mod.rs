@@ -5,6 +5,7 @@ pub const HOST_PRIMARY_PORT: u32 = 5564;
 pub const HOST_FRAME_STREAM_PORT: u32 = 5565;
 pub const HOST_INPUT_STREAM_PORT: u32 = 5566;
 
+#[cfg(target_os = "linux")]
 pub struct Host {
     pub context: zmq::Context,
 
@@ -21,6 +22,7 @@ pub struct Host {
     pub w_frame: zmq::Socket,
 }
 
+#[cfg(target_os = "linux")]
 impl Host {
     pub fn new() -> Self {
         let context = zmq::Context::new();
@@ -164,6 +166,7 @@ impl Client {
     }
 }
 
+#[cfg(target_os = "linux")]
 pub fn host() {
     let context = zmq::Context::new();
     let publisher = context.socket(zmq::PUB).unwrap();

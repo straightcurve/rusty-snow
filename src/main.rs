@@ -237,6 +237,7 @@ fn host(args: Vec<String>) {
     loop {}
 }
 
+#[cfg(target_os = "linux")]
 fn hex(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -245,6 +246,7 @@ fn hex(bytes: &[u8]) -> String {
         .join("")
 }
 
+#[cfg(target_os = "linux")]
 fn worker_task(id: String) {
     let mut client = networking::Client::new();
     client.connect(String::from("localhost"), id);
@@ -378,7 +380,7 @@ fn main() {
         host(args);
     } else {
         let mut client = networking::Client::new();
-        client.connect(String::from("localhost"), String::from("tony"));
+        client.connect(String::from("192.168.0.103"), String::from("tony"));
 
         let worker = &client.rw_primary;
         worker.send("NAME", SNDMORE).unwrap();
