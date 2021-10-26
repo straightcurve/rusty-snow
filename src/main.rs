@@ -1,16 +1,12 @@
-mod networking;
-mod recording;
-
 use std::env;
-use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
 use std::u64;
 use zmq::SNDMORE;
 
-#[macro_use]
-extern crate lazy_static;
+mod networking;
+mod recording;
 
 #[macro_use]
 extern crate glium;
@@ -84,15 +80,53 @@ fn handshake(context: &zmq::Context) {
 fn send_frames(context: &zmq::Context) {
     let args: Vec<String> = env::args().collect();
     let display = recording::open_display();
-    let w_frame = context.socket(zmq::PUB).unwrap();
-    w_frame
-        .bind(&format!("tcp://*:{}", networking::HOST_FRAME_STREAM_PORT))
-        .expect("Failed binding out socket for host");
+
+    //    let w_frame = context.socket(zmq::PUB).unwrap();
+    //    w_frame
+    //        .bind(&format!("tcp://*:{}", networking::HOST_FRAME_STREAM_PORT))
+    //        .expect("Failed binding out socket for host");
+
+    // A token to allow us to identify which event is for the `UdpSocket`.
+    const UDP_SOCKET: Token = Token(0);
+
+    // Create a poll instance.
+    let mut poll = Poll::new().unwrap();
+
+    // Setup the UDP socket.
+    let addr = format!("127.0.0.1:{}", networking::HOST_FRAME_STREAM_PORT)
+        .parse()
+        .unwrap();
+    let mut subscribers: Vec<std::net::SocketAddr> = vec![];
+
+    subscribers.push(
+        format!("127.0.0.1:{}", networking::CLIENT_FRAME_STREAM_PORT)
+            .parse()
+            .unwrap(),
+    );
+
+    let mut socket = UdpSocket::bind(addr).unwrap();
+
+    // Register our socket with the token defined above and an interest in being
+    // `READABLE`.
+    poll.registry()
+        .register(&mut socket, UDP_SOCKET, Interest::WRITABLE)
+        .unwrap();
+
+    let mut fc = 0;
 
     loop {
         let xid = u64::from_str_radix(&args[2], 16).unwrap();
         let image = recording::record_linux(display, xid);
         {
+            let packet = image.data.as_ref().unwrap().to_vec();
+
+            for s in &subscribers {
+                socket.send_to(&packet, *s).unwrap();
+                fc += 1;
+                println!("sent frame {} to: {}", fc, *s);
+            }
+
+            /*
             w_frame
                 .send("frame", zmq::SNDMORE)
                 .expect("failed sending frame envelope");
@@ -105,10 +139,20 @@ fn send_frames(context: &zmq::Context) {
             w_frame
                 .send(image.data.unwrap(), 0)
                 .expect("failed sending frame");
+                */
         }
 
         thread::sleep(Duration::from_millis(1));
     }
+}
+
+use mio::net::UdpSocket;
+use mio::{Events, Interest, Poll, Token};
+use std::io;
+
+fn host_udp() -> io::Result<()> {
+    // Our event loop.
+    loop {}
 }
 
 #[cfg(target_os = "linux")]
@@ -518,33 +562,6 @@ fn do_client_stuff(client: networking::Client) {
 
     implement_vertex!(SnowVertex, position, tex_coords);
 
-    let data = vec![
-        SnowVertex {
-            position: [-1.0, -1.0],
-            tex_coords: [0.0, 1.0],
-        },
-        SnowVertex {
-            position: [-1.0, 1.0],
-            tex_coords: [0.0, 0.0],
-        },
-        SnowVertex {
-            position: [1.0, 1.0],
-            tex_coords: [1.0, 0.0],
-        },
-        SnowVertex {
-            position: [1.0, -1.0],
-            tex_coords: [1.0, 1.0],
-        },
-        SnowVertex {
-            position: [-1.0, -1.0],
-            tex_coords: [0.0, 1.0],
-        },
-        SnowVertex {
-            position: [1.0, 1.0],
-            tex_coords: [1.0, 0.0],
-        },
-    ];
-
     let _indices: Vec<u8> = vec![0, 1, 2, 3, 0, 2];
     let vertex_src = r#"
     #version 140
@@ -574,8 +591,6 @@ out vec2 v_tex_coords;
   }"#;
     let program = glium::Program::from_source(&display, vertex_src, fragment_src, None).unwrap();
 
-    use glium::Surface;
-
     let context = &client.context;
     let w_input = context.socket(zmq::PUSH).unwrap();
     w_input
@@ -593,6 +608,41 @@ out vec2 v_tex_coords;
                 networking::HOST_INPUT_STREAM_PORT
             )
         ));
+
+    let mtx0 = std::sync::Mutex::new(SnowFrame {
+        data: None,
+        width: 0,
+        height: 0,
+    });
+    let mtx1 = std::sync::Mutex::new(SnowFrame {
+        data: None,
+        width: 0,
+        height: 0,
+    });
+
+    static mut RENDERER: Renderer = Renderer::new();
+
+    thread::spawn(move || {
+        let mut facade = NetFacade::new();
+
+        loop {
+            unsafe {
+                let frame = facade.get_frame();
+
+                RENDERER.write(frame);
+                RENDERER.swap_buffers();
+            }
+
+            /*
+            let mut guard = mtx0.lock().unwrap();
+            let frame = facade.get_frame();
+
+            guard.data = frame.data;
+            guard.width = frame.width;
+            guard.height = frame.height;
+            */
+        }
+    });
 
     event_loop.run(move |ev, _, control_flow| {
         let next_frame_time =
@@ -633,83 +683,357 @@ out vec2 v_tex_coords;
             _ => (),
         }
 
-        let mut frame = display.draw();
-        frame.clear_color(0.0, 0.0, 0.0, 1.0);
+        /*
+                let frame_stream = &client.r_frame;
 
-        let frame_stream = &client.r_frame;
+                let _envelope = frame_stream
+                    .recv_string(0)
+                    .expect("failed receiving envelope")
+                    .unwrap();
+                let width = bincode::deserialize(
+                    &frame_stream
+                        .recv_bytes(0)
+                        .expect("failed receiving message"),
+                )
+                .unwrap();
 
-        let _envelope = frame_stream
-            .recv_string(0)
-            .expect("failed receiving envelope")
-            .unwrap();
-        let width = bincode::deserialize(
-            &frame_stream
-                .recv_bytes(0)
-                .expect("failed receiving message"),
-        )
-        .unwrap();
+                let height: u32 = bincode::deserialize(
+                    &frame_stream
+                        .recv_bytes(0)
+                        .expect("failed receiving message"),
+                )
+                .unwrap();
+        */
 
-        let height: u32 = bincode::deserialize(
-            &frame_stream
-                .recv_bytes(0)
-                .expect("failed receiving message"),
-        )
-        .unwrap();
-
-        let message = frame_stream
-            .recv_bytes(0)
-            .expect("failed receiving message");
-
-        let d = mozjpeg::Decompress::with_markers(mozjpeg::NO_MARKERS)
-            .from_mem(&message)
-            .unwrap();
-
-        assert!(d.color_space() == mozjpeg::ColorSpace::JCS_YCbCr);
-
-        let mut rgb = d.rgba().unwrap();
-        assert!(rgb.color_space() == mozjpeg::ColorSpace::JCS_EXT_RGBA);
-
-        let mut pixels: Vec<u32> = rgb.read_scanlines().unwrap();
-        assert!(rgb.finish_decompress());
-
-        let mut u8slice = bincode::serialize(&pixels).unwrap();
-        for i in 0..8 {
-            u8slice.pop();
-        }
-
-        let image = glium::texture::RawImage2d::from_raw_rgba(u8slice, (width, height));
-        let texture = glium::texture::SrgbTexture2d::new(&display, image).unwrap();
-
-        let (our_width, our_height) = frame.get_dimensions();
-        let scale_x; // = 1.0;
-        let scale_y; // = 1.0 / (width as f32 / height as f32);
-
-        scale_x = width as f32 / our_width as f32;
-        scale_y = height as f32 / our_height as f32;
-
-        let uniforms = uniform! {
-
-        matrix: [
-            [scale_x, 0.0, 0.0, 0.0],
-            [0.0, scale_y, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [ 0.0 , 0.0, 0.0, 1.0f32],
-        ],
-            tex: &texture,
-        };
-
-        frame
-            .draw(
-                &glium::vertex::VertexBuffer::new(&display, &data).unwrap(),
-                &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList),
+        unsafe {
+            let frame = RENDERER.read();
+            draw(
+                &display,
+                frame.width,
+                frame.height,
                 &program,
-                &uniforms,
-                &Default::default(),
+                frame
+                    .data
+                    .as_ref()
+                    .unwrap_or(&vec![0; (frame.width * frame.height * 4) as usize])
+                    .to_vec(),
+            );
+        }
+        /*
+                    frame_stream
+                    .recv_bytes(0)
+                    .expect("failed receiving message");
+        */
+        /*
+        if let Err(e) = socket.recv_from(&mut buf) {
+            if e.kind() != io::ErrorKind::WouldBlock {
+                println!("{}", e);
+            }
+            break;
+        } else if let Ok((size, source)) = socket.recv_from(&mut buf) {
+            println!("packet size: {}", size);
+            width = bincode::deserialize::<u32>(&buf[0..31]).unwrap();
+            height = bincode::deserialize::<u32>(&buf[31..63]).unwrap();
+            message = buf[63..size].to_vec();
+        }
+        */
+
+        /*
+        match event.token() {
+            UDP_SOCKET => loop {
+                // In this loop we receive all packets queued for the socket.
+                match socket.recv_from(&mut buf) {
+                    Ok((packet_size, source_address)) => {
+                        println!("packet size: {}", packet_size);
+                        width = bincode::deserialize::<u32>(&buf[0..31]).unwrap();
+                        height = bincode::deserialize::<u32>(&buf[31..63]).unwrap();
+                        message = buf[63..packet_size].to_vec();
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        // If we get a `WouldBlock` error we know our socket
+                        // has no more packets queued, so we can return to
+                        // polling and wait for some more.
+                        break;
+                    }
+                    Err(e) => {
+                        // If it was any other kind of error, something went
+                        // wrong and we terminate with an error.
+                        println!("{}", e);
+                    }
+                }
+            },
+            _ => {
+                // This should never happen as we only registered our
+                // `UdpSocket` using the `UDP_SOCKET` token, but if it ever
+                // does we'll log it.
+                println!("Got event for unexpected token: {:?}", event);
+            }
+        }
+        */
+    });
+}
+
+struct Renderer {
+    buffers: [SnowFrame; 2],
+    read_from: usize,
+    write_to: usize,
+}
+
+impl Renderer {
+    const fn new() -> Self {
+        Self {
+            buffers: [
+                SnowFrame {
+                    data: None,
+                    width: 0,
+                    height: 0,
+                },
+                SnowFrame {
+                    data: None,
+                    width: 0,
+                    height: 0,
+                },
+            ],
+            read_from: 0,
+            write_to: 1,
+        }
+    }
+
+    fn read(&self) -> &SnowFrame {
+        &self.buffers[self.read_from]
+    }
+
+    fn write(&mut self, frame: SnowFrame) {
+        self.buffers[self.write_to] = frame;
+    }
+
+    fn swap_buffers(&mut self) {
+        //  TODO: schedule swap buffers, don't swap them directly
+        self.read_from = (self.read_from + 1) % 2;
+        self.write_to = (self.write_to + 1) % 2;
+    }
+}
+
+// A token to allow us to identify which event is for the `UdpSocket`.
+const UDP_SOCKET: Token = Token(0);
+
+struct NetFacade {
+    events: Events,
+    poll: Poll,
+    socket: UdpSocket,
+    buf: [u8; 1 << 16],
+}
+
+impl NetFacade {
+    fn new() -> Self {
+        // Create storage for events. Since we will only register a single socket, a
+        // capacity of 1 will do.
+        let mut events = Events::with_capacity(1);
+
+        // Create a poll instance.
+        let mut poll = Poll::new().unwrap();
+
+        // Setup the UDP socket.
+        let addr = format!("127.0.0.1:{}", networking::CLIENT_FRAME_STREAM_PORT)
+            .parse()
+            .unwrap();
+
+        println!("You can connect to the server using `nc`:");
+        println!(" $ nc -u 127.0.0.1 9000");
+        println!("Anything you type will be echoed back to you.");
+
+        let mut socket = UdpSocket::bind(addr).unwrap();
+
+        // Register our socket with the token defined above and an interest in being
+        // `READABLE`.
+        poll.registry()
+            .register(&mut socket, UDP_SOCKET, Interest::READABLE)
+            .unwrap();
+
+        socket
+            .connect(
+                format!("127.0.0.1:{}", networking::HOST_FRAME_STREAM_PORT)
+                    .parse()
+                    .unwrap(),
             )
             .unwrap();
 
-        frame.finish().unwrap();
-    });
+        // Initialize a buffer for the UDP packet. We use the maximum size of a UDP
+        // packet, which is the maximum value of 16 a bit integer.
+        let mut buf = [0; 1 << 16];
+
+        return Self {
+            events,
+            poll,
+            socket,
+            buf,
+        };
+    }
+
+    fn get_frame(&mut self) -> SnowFrame {
+        // Poll to check if we have events waiting for us.
+        self.poll.poll(&mut self.events, None).unwrap();
+
+        // Process each event.
+        for event in self.events.iter() {
+            // Validate the token we registered our socket with,
+            // in this example it will only ever be one but we
+            // make sure it's valid none the less.
+            match event.token() {
+                UDP_SOCKET => {
+                    loop {
+                        match self.socket.recv_from(&mut self.buf) {
+                            Ok((packet_size, source_address)) => {
+                                let message = self.buf.to_vec();
+
+                                let d = mozjpeg::Decompress::with_markers(mozjpeg::NO_MARKERS)
+                                    .from_mem(&message)
+                                    .unwrap();
+
+                                assert!(d.color_space() == mozjpeg::ColorSpace::JCS_YCbCr);
+
+                                let mut rgb = d.rgba().unwrap();
+                                assert!(rgb.color_space() == mozjpeg::ColorSpace::JCS_EXT_RGBA);
+
+                                let width = rgb.width() as u32;
+                                let height = rgb.height() as u32;
+
+                                let mut pixels: Vec<u32> = rgb.read_scanlines().unwrap();
+                                assert!(rgb.finish_decompress());
+
+                                let mut u8slice = bincode::serialize(&pixels).unwrap();
+                                for i in 0..8 {
+                                    u8slice.pop();
+                                }
+
+                                return SnowFrame {
+                                    data: Some(u8slice),
+                                    width,
+                                    height,
+                                };
+                            }
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                // If we get a `WouldBlock` error we know our socket
+                                // has no more packets queued, so we can return to
+                                // polling and wait for some more.
+
+                                println!("{}", e);
+                                return SnowFrame {
+                                    data: None,
+                                    width: 0,
+                                    height: 0,
+                                };
+                            }
+                            Err(e) => {
+                                // If it was any other kind of error, something went
+                                // wrong and we terminate with an error.
+                                println!("{}", e);
+                                return SnowFrame {
+                                    data: None,
+                                    width: 0,
+                                    height: 0,
+                                };
+                            }
+                        }
+                    }
+                }
+
+                _ => {
+                    println!("got token: {:?}", event);
+                    return SnowFrame {
+                        data: None,
+                        width: 0,
+                        height: 0,
+                    };
+                }
+            }
+        }
+
+        return SnowFrame {
+            data: None,
+            width: 0,
+            height: 0,
+        };
+    }
+}
+
+#[derive(Clone)]
+struct SnowFrame {
+    data: Option<Vec<u8>>,
+    width: u32,
+    height: u32,
+}
+
+fn draw(
+    display: &glium::Display,
+    width: u32,
+    height: u32,
+    program: &glium::Program,
+    image: Vec<u8>,
+) {
+    let data = vec![
+        SnowVertex {
+            position: [-1.0, -1.0],
+            tex_coords: [0.0, 1.0],
+        },
+        SnowVertex {
+            position: [-1.0, 1.0],
+            tex_coords: [0.0, 0.0],
+        },
+        SnowVertex {
+            position: [1.0, 1.0],
+            tex_coords: [1.0, 0.0],
+        },
+        SnowVertex {
+            position: [1.0, -1.0],
+            tex_coords: [1.0, 1.0],
+        },
+        SnowVertex {
+            position: [-1.0, -1.0],
+            tex_coords: [0.0, 1.0],
+        },
+        SnowVertex {
+            position: [1.0, 1.0],
+            tex_coords: [1.0, 0.0],
+        },
+    ];
+
+    use glium::Surface;
+    let mut frame = display.draw();
+    frame.clear_color(0.0, 0.0, 0.0, 1.0);
+
+    let image = glium::texture::RawImage2d::from_raw_rgba(image, (width, height));
+    let texture = glium::texture::SrgbTexture2d::new(display, image).unwrap();
+
+    let (our_width, our_height) = frame.get_dimensions();
+    let scale_x; // = 1.0;
+    let scale_y; // = 1.0 / (width as f32 / height as f32);
+
+    scale_x = width as f32 / our_width as f32;
+    scale_y = height as f32 / our_height as f32;
+
+    let uniforms = uniform! {
+
+    matrix: [
+        [scale_x, 0.0, 0.0, 0.0],
+        [0.0, scale_y, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [ 0.0 , 0.0, 0.0, 1.0f32],
+    ],
+        tex: &texture,
+    };
+
+    frame
+        .draw(
+            &glium::vertex::VertexBuffer::new(display, &data).unwrap(),
+            &glium::index::NoIndices(glium::index::PrimitiveType::TrianglesList),
+            &program,
+            &uniforms,
+            &Default::default(),
+        )
+        .unwrap();
+
+    frame.finish().unwrap();
 }
 
 fn yes() {

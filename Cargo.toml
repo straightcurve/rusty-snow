@@ -16,6 +16,7 @@ gilrs = "*"
 lazy_static = "1.4.0"
 mozjpeg = "*"
 mio = "*"
+log = "*"
 
 [target.'cfg(unix)'.dependencies]
 x11 = "2.19.1"

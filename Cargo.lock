@@ -1582,6 +1582,7 @@ dependencies = [
  "input-linux",
  "input-linux-sys",
  "lazy_static",
+ "log",
  "mio",
  "mozjpeg",
  "png 0.17.2",

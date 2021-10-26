@@ -4,6 +4,7 @@ use std::time::Duration;
 pub const HOST_PRIMARY_PORT: u32 = 5564;
 pub const HOST_FRAME_STREAM_PORT: u32 = 5565;
 pub const HOST_INPUT_STREAM_PORT: u32 = 5566;
+pub const CLIENT_FRAME_STREAM_PORT: u32 = 6565;
 
 #[cfg(target_os = "linux")]
 pub struct Host {
