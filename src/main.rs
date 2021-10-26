@@ -107,31 +107,65 @@ fn send_frames(context: &zmq::Context) {
                 .expect("failed sending frame");
         }
 
-        thread::sleep(Duration::from_millis(16));
+        thread::sleep(Duration::from_millis(1));
     }
 }
 
 #[cfg(target_os = "linux")]
 fn handle_input(context: &zmq::Context) {
-    use evdev::uinput::VirtualDeviceBuilder;
-    use evdev::AttributeSet;
-    use evdev::InputId;
-    use evdev::Key;
+    use sweetacid_evdev::uinput::VirtualDeviceBuilder;
+    use sweetacid_evdev::AbsoluteAxisType as Axis;
+    use sweetacid_evdev::AttributeSet;
+    use sweetacid_evdev::InputId;
+    use sweetacid_evdev::Key;
 
-    let mut keys: AttributeSet<Key> = AttributeSet::new();
-    keys.insert(Key::new(17));
-    keys.insert(Key::new(30));
-    keys.insert(Key::new(31));
-    keys.insert(Key::new(32));
+    use input_event_codes as e;
+
+    let mut keys = vec![];
+    keys.push(Key::new(e::BTN_A));
+    keys.push(Key::new(e::BTN_B));
+    keys.push(Key::new(e::BTN_X));
+    keys.push(Key::new(e::BTN_Y));
+    keys.push(Key::new(e::BTN_TL));
+    keys.push(Key::new(e::BTN_TR));
+    keys.push(Key::new(e::BTN_TL2));
+    keys.push(Key::new(e::BTN_TR2));
+    keys.push(Key::new(e::BTN_SELECT));
+    keys.push(Key::new(e::BTN_START));
+    keys.push(Key::new(e::BTN_THUMBL));
+    keys.push(Key::new(e::BTN_THUMBR));
+
+    let mut key_attribs: AttributeSet<Key> = AttributeSet::new();
+    for k in &keys {
+        key_attribs.insert(*k);
+    }
+
+    let mut axes: AttributeSet<Axis> = AttributeSet::new();
+    axes.insert(Axis::ABS_X);
+    axes.insert(Axis::ABS_Y);
+    axes.insert(Axis::ABS_Z);
+    axes.insert(Axis::ABS_RX);
+    axes.insert(Axis::ABS_RY);
+    axes.insert(Axis::ABS_RZ);
 
     let mut vd = VirtualDeviceBuilder::new()
         .unwrap()
-        .name("Rusty Snow Virtual Keyboard")
-        .input_id(InputId::new(evdev::BusType::BUS_USB, 0x02, 0x03, 2))
-        .with_keys(&keys)
+        .name("Rusty Snow Virtual Gamepad")
+        .input_id(InputId::new(
+            sweetacid_evdev::BusType::BUS_USB,
+            0x045e,
+            0x028e,
+            2,
+        ))
+        .with_keys(&key_attribs)
+        .unwrap()
+        .with_absolute_axes(&axes)
         .unwrap()
         .build()
         .unwrap();
+
+    thread::sleep(Duration::from_millis(1500));
+
     /*
         use evdev_rs::enums;
         //use evdev_rs::enums::EventCode::EV_KEY;
@@ -166,6 +200,64 @@ fn handle_input(context: &zmq::Context) {
 
         let key = u16::from_str_radix(&key_str, 10).unwrap();
         let state = i32::from_str_radix(&state_str, 10).unwrap();
+
+        if key == 17 {
+            let mut value = 127;
+            if state == 1 {
+                value = 255;
+            }
+
+            vd.emit(&[sweetacid_evdev::InputEvent::new(
+                sweetacid_evdev::EventType::ABSOLUTE,
+                0x01,
+                value,
+            )])
+            .unwrap();
+        } else if key == 31 {
+            let mut value = 127;
+            if state == 1 {
+                value = 0;
+            }
+
+            vd.emit(&[sweetacid_evdev::InputEvent::new(
+                sweetacid_evdev::EventType::ABSOLUTE,
+                0x01,
+                value,
+            )])
+            .unwrap();
+        } else if key == 30 {
+            let mut value = 127;
+            if state == 1 {
+                value = 0;
+            }
+
+            vd.emit(&[sweetacid_evdev::InputEvent::new(
+                sweetacid_evdev::EventType::ABSOLUTE,
+                0x00,
+                value,
+            )])
+            .unwrap();
+        } else if key == 32 {
+            let mut value = 127;
+            if state == 1 {
+                value = 255;
+            }
+
+            vd.emit(&[sweetacid_evdev::InputEvent::new(
+                sweetacid_evdev::EventType::ABSOLUTE,
+                0x00,
+                value,
+            )])
+            .unwrap();
+        } else {
+            vd.emit(&[sweetacid_evdev::InputEvent::new(
+                sweetacid_evdev::EventType::KEY,
+                e::BTN_SOUTH,
+                state,
+            )])
+            .unwrap();
+        }
+
         /*
         ui.write_event(&InputEvent::new(
             &TimeVal::new(0, 0),
@@ -187,8 +279,6 @@ fn handle_input(context: &zmq::Context) {
 
         */
         //thread::sleep(Duration::from_millis(1));
-        vd.emit(&[evdev::InputEvent::new(evdev::EventType::KEY, key, state)])
-            .unwrap();
     }
 }
 
@@ -377,7 +467,6 @@ fn main() {
     println!("{:?}", args);
 
     if args.len() != 1 && args[1] == "host" {
-        //test_bench();
         host(args);
     } else {
         let mut client = networking::Client::new();
@@ -621,4 +710,194 @@ out vec2 v_tex_coords;
 
         frame.finish().unwrap();
     });
+}
+
+fn yes() {
+    use gilrs::{Button, Event, Gilrs};
+
+    let mut gilrs = Gilrs::new().unwrap();
+
+    let mut active_gamepad = None;
+    // Iterate over all connected gamepads
+    for (_id, gamepad) in gilrs.gamepads() {
+        println!("{} is {:?}", gamepad.name(), gamepad.power_info());
+    }
+
+    use sweetacid_evdev::uinput::VirtualDeviceBuilder;
+    use sweetacid_evdev::AbsoluteAxisType as Axis;
+    use sweetacid_evdev::AttributeSet;
+    use sweetacid_evdev::InputId;
+    use sweetacid_evdev::Key;
+
+    use input_event_codes as e;
+
+    let mut keys = vec![];
+    keys.push(Key::new(e::BTN_A));
+    keys.push(Key::new(e::BTN_B));
+    keys.push(Key::new(e::BTN_X));
+    keys.push(Key::new(e::BTN_Y));
+    keys.push(Key::new(e::BTN_TL));
+    keys.push(Key::new(e::BTN_TR));
+    keys.push(Key::new(e::BTN_TL2));
+    keys.push(Key::new(e::BTN_TR2));
+    keys.push(Key::new(e::BTN_SELECT));
+    keys.push(Key::new(e::BTN_START));
+    keys.push(Key::new(e::BTN_THUMBL));
+    keys.push(Key::new(e::BTN_THUMBR));
+
+    let mut key_attribs: AttributeSet<Key> = AttributeSet::new();
+    for k in &keys {
+        key_attribs.insert(*k);
+    }
+
+    let mut axes: AttributeSet<Axis> = AttributeSet::new();
+    axes.insert(Axis::ABS_X);
+    axes.insert(Axis::ABS_Y);
+    axes.insert(Axis::ABS_Z);
+    axes.insert(Axis::ABS_RX);
+    axes.insert(Axis::ABS_RY);
+    axes.insert(Axis::ABS_RZ);
+
+    let mut vd = VirtualDeviceBuilder::new()
+        .unwrap()
+        .name("Rusty Snow Virtual Gamepad")
+        .input_id(InputId::new(
+            sweetacid_evdev::BusType::BUS_USB,
+            0x045e,
+            0x028e,
+            2,
+        ))
+        .with_keys(&key_attribs)
+        .unwrap()
+        .with_absolute_axes(&axes)
+        .unwrap()
+        .build()
+        .unwrap();
+
+    thread::sleep(Duration::from_millis(1500));
+
+    loop {
+        /*
+                    for k in &keys {
+                        vd.emit(&[evdev::InputEvent::new(
+                            evdev::EventType::KEY,
+                            (*k).code(),
+                            1,
+                        )])
+                        .unwrap();
+
+                        thread::sleep(Duration::from_millis(500));
+
+                        vd.emit(&[evdev::InputEvent::new(
+                            evdev::EventType::KEY,
+                            (*k).code(),
+                            1,
+                        )])
+                        .unwrap();
+
+                        thread::sleep(Duration::from_millis(500));
+                    }
+        */
+
+        let mut to_emit: Vec<sweetacid_evdev::InputEvent> = vec![];
+
+        // Examine new events
+        while let Some(Event { id, event, time }) = gilrs.next_event() {
+            //println!("{:?} New event from {}: {:?}", time, id, event);
+            active_gamepad = Some(id);
+
+            use gilrs::ev::EventType::{AxisChanged, ButtonChanged};
+
+            match event {
+                AxisChanged(axis, mut value, code) => {
+                    let orig = value;
+                    println!("{:?} | {} | {}", axis, orig, code);
+
+                    //if axis != gilrs::Axis::LeftStickY {
+                    //  value is [-1 - 1]
+                    //  convert to [0 - 2] -> [0 - 200] -> [0 - 255] ranges
+                    let deadzone = 0.05;
+                    if value.abs() <= deadzone {
+                        value = 0.0;
+                    }
+
+                    value += 1.0;
+
+                    if value > 0.0 {
+                        println!("after deadzone: {}", value);
+                    }
+
+                    let actual = lerp(0.0, 255.0, (value * 100.0) / 200.0);
+
+                    fn lerp(v0: f32, v1: f32, t: f32) -> f32 {
+                        return v0 + t * (v1 - v0);
+                    }
+
+                    println!("orig: {} | we get {}", value, actual as i32);
+
+                    to_emit.push(sweetacid_evdev::InputEvent::new(
+                        sweetacid_evdev::EventType::ABSOLUTE,
+                        code.into_u32() as u16,
+                        actual as i32,
+                    ))
+                    // }
+                }
+
+                ButtonChanged(_, state, code) => to_emit.push(sweetacid_evdev::InputEvent::new(
+                    sweetacid_evdev::EventType::KEY,
+                    code.into_u32() as u16,
+                    state as i32,
+                )),
+                _ => {
+                    println!("rip {:?}", event);
+                }
+            };
+        }
+
+        vd.emit(&to_emit).unwrap();
+
+        to_emit.clear();
+        // You can also use cached gamepad state
+        /*
+        if let Some(gamepad) = active_gamepad.map(|id| gilrs.gamepad(id)) {
+            let axis = gilrs::Axis::LeftStickX;
+            let mut value = gamepad.value(axis);
+            let code = 0x00;
+            let orig = value;
+            println!("{:?} | {}", axis, orig);
+
+            //if axis != gilrs::Axis::LeftStickY {
+            //  value is [-1 - 1]
+            //  convert to [0 - 2] -> [0 - 200] -> [0 - 255] ranges
+            let deadzone = 0.05;
+            if value.abs() <= deadzone {
+                value = 0.0;
+            }
+
+            value += 1.0;
+
+            if value > 0.0 {
+                println!("after deadzone: {}", value);
+            }
+
+            let actual = lerp(0.0, 255.0, (value * 100.0) / 200.0);
+
+            fn lerp(v0: f32, v1: f32, t: f32) -> f32 {
+                return v0 + t * (v1 - v0);
+            }
+
+            println!("orig: {} | we get {}", value, actual as i32);
+
+            to_emit.push(sweetacid_evdev::InputEvent::new(
+                sweetacid_evdev::EventType::ABSOLUTE,
+                code as u16,
+                actual as i32,
+            ));
+
+            if gamepad.is_pressed(Button::South) {
+                println!("Button South is pressed (XBox - A, PS - X)");
+            }
+        }
+        */
+    }
 }
